@@ -1,0 +1,308 @@
+import tkinter as tk
+from tkinter import messagebox
+import subprocess
+import winreg
+import ctypes
+import platform
+import sys
+
+# Functions from Code 1
+def is_firewall_enabled():
+    key_path = r"SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\StandardProfile"
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path) as key:
+            enable_firewall = winreg.QueryValueEx(key, "EnableFirewall")[0]
+            return enable_firewall == 1
+    except FileNotFoundError:
+        return False
+    except Exception as e:
+        print(f"Error accessing the Registry: {e}")
+        return False
+
+def check_telnet_status():
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Applets\Telnet") as telnet_key:
+            _, telnet_status = winreg.QueryValueEx(telnet_key, "EnableTelnetClient")
+            if telnet_status == 1:
+                return "Telnet Client is enabled."
+            else:
+                return "Telnet Client is disabled."
+    except FileNotFoundError:
+        return "Telnet Client is not installed."
+
+def check_tftp_status():
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\TFTP Client") as tftp_key:
+            _, tftp_status = winreg.QueryValueEx(tftp_key, "Enable")
+            if tftp_status == 1:
+                return "TFTP Client is enabled."
+            else:
+                return "TFTP Client is disabled."
+    except FileNotFoundError:
+        return "TFTP Client is not installed."
+
+def check_rdp_status():
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"System\CurrentControlSet\Control\Terminal Server", 0, winreg.KEY_READ) as key:
+            value, _ = winreg.QueryValueEx(key, "fDenyTSConnections")
+            if value == 0:
+                return "Remote Desktop Protocol (RDP) is enabled."
+            else:
+                return "Remote Desktop Protocol (RDP) is disabled."
+    except FileNotFoundError:
+        return "Remote Desktop Protocol (RDP) is not installed."
+
+def get_defender_status():
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows Defender", 0, winreg.KEY_READ) as key:
+            value, _ = winreg.QueryValueEx(key, "DisableAntiSpyware")
+            if value == 0:
+                return "Microsoft Defender Antivirus is enabled."
+            elif value == 1:
+                return "Microsoft Defender Antivirus is disabled."
+            else:
+                return "Unknown status"
+    except FileNotFoundError:
+        return "Microsoft Defender Antivirus is not installed."
+
+def check_admin_autologon():
+    try:
+        reg_key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon", 0, winreg.KEY_READ)
+        value, _ = winreg.QueryValueEx(reg_key, "AutoAdminLogon")
+        return value == '1'
+    except FileNotFoundError:
+        return False
+
+def is_uac_enabled():
+    try:
+        key = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"
+        value_name = "EnableLUA"
+        reg_type = ctypes.c_uint32(0)
+        reg_value = ctypes.c_uint32(0)
+        ctypes.windll.advapi32.RegGetValueW(ctypes.c_uint32(0x80000002), key, value_name, ctypes.c_uint32(4), ctypes.byref(reg_type), ctypes.byref(reg_value), ctypes.byref(ctypes.c_uint32(4)))
+        return reg_value.value == 1
+    except Exception as e:
+        print("Error:", e)
+        return False
+
+def get_startup_programs():
+    startup_programs = []
+    key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_READ)
+    try:
+        index = 0
+        while True:
+            name, value, _ = winreg.EnumValue(key, index)
+            startup_programs.append((name, value))
+            index += 1
+    except WindowsError:
+        pass
+    winreg.CloseKey(key)
+    return startup_programs
+
+def check_remote_registry_status():
+    try:
+        output = subprocess.check_output("sc qc RemoteRegistry", shell=True)
+        output = output.decode("utf-8").strip()
+        if "START_TYPE               : 2" in output:
+            print("Remote Registry service is currently enabled.")
+            return True
+        else:
+            print("Remote Registry service is currently disabled.")
+            return False
+    except subprocess.CalledProcessError as e:
+        print("Error:", e.output.decode("utf-8").strip())
+        return False
+
+def disable_remote_registry():
+    try:
+        subprocess.run("sc config RemoteRegistry start= disabled", shell=True, check=True)
+        print("Remote Registry service has been disabled successfully.")
+    except subprocess.CalledProcessError as e:
+        print(f"Error: {e}")
+
+def enable_uac():
+    try:
+        subprocess.run(["reg", "add", r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System", "/v", "EnableLUA", "/t", "REG_DWORD", "/d", "1", "/f"], check=True)
+    except subprocess.CalledProcessError as e:
+        print(f"Error enabling UAC: {e}")
+
+# Functions from Code 2
+def check_ip_protocol():
+    try:
+        result = subprocess.run(['ipconfig'], capture_output=True, text=True)
+        output = result.stdout
+        has_ipv4 = "IPv4 Address" in output
+        has_ipv6 = "IPv6 Address" in output
+        if has_ipv4:
+            print("IPv4 is enabled.")
+        if has_ipv6:
+            print("IPv6 is enabled.")
+        return has_ipv4, has_ipv6
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        sys.exit(1)
+
+def disable_ipv6():
+    try:
+        subprocess.run(['reg', 'add', 'HKLM\\System\\CurrentControlSet\\services\\TCPIP6\\Parameters', '/v', 'DisabledComponents', '/t', 'REG_DWORD', '/d', '255', '/f'], check=True)
+        print("IPv6 has been disabled. A system restart is required for changes to take effect.")
+    except Exception as e:
+        print(f"An error occurred while disabling IPv6: {e}")
+        sys.exit(1)
+
+def run_ipv6_disable():
+    has_ipv4, has_ipv6 = check_ip_protocol()
+    if has_ipv6:
+        choice = messagebox.askquestion("IPv6 Status", "IPv6 is enabled. Do you want to disable it?")
+        if choice == "yes":
+            disable_ipv6()
+            messagebox.showinfo("IPv6 Status", "IPv6 has been disabled. A system restart is required for changes to take effect.")
+        else:
+            messagebox.showinfo("IPv6 Status", "IPv6 will remain enabled.")
+    else:
+        messagebox.showinfo("IPv6 Status", "IPv6 is not enabled. No action required.")
+
+# Functions from Code 3
+def get_windows_version():
+    version_info = platform.win32_ver()
+    system = version_info[0]
+    version = version_info[1]
+    if system == "":
+        return "Not Windows"
+    else:
+        return system, version
+
+def run_windows_version():
+    windows_system, windows_version = get_windows_version()
+    messagebox.showinfo("Windows Version", f"You are using Windows {windows_system} version {windows_version}.")
+
+# Functions from Code 4
+def check_plain_text_password():
+    try:
+        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"System\CurrentControlSet\Services\LanmanWorkstation\Parameters", 0, winreg.KEY_READ)
+        try:
+            value, _ = winreg.QueryValueEx(key, "EnablePlainTextPassword")
+            if value == 0:
+                messagebox.showinfo("Plain Text Password", "Plain text passwords are currently disabled.")
+            else:
+                choice = messagebox.askquestion("Plain Text Password", "Plain text passwords are currently enabled. Do you want to disable it?")
+                if choice == "yes":
+                    disable_plain_text_password()
+                    messagebox.showinfo("Plain Text Password", "Plain text passwords have been disabled.")
+        except FileNotFoundError:
+            messagebox.showinfo("Plain Text Password", "EnablePlainTextPassword is not found in the registry. It may be using default settings.")
+        winreg.CloseKey(key)
+    except Exception as e:
+        print(f"An error occurred while checking plain text passwords: {e}")
+
+def disable_plain_text_password():
+    try:
+        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"System\CurrentControlSet\Services\LanmanWorkstation\Parameters", 0, winreg.KEY_WRITE)
+        winreg.SetValueEx(key, "EnablePlainTextPassword", 0, winreg.REG_DWORD, 0)
+        winreg.CloseKey(key)
+        print("EnablePlainTextPassword has been disabled.")
+    except Exception as e:
+        print(f"An error occurred while disabling EnablePlainTextPassword: {e}")
+
+def run_plain_text_password_check():
+    check_plain_text_password()
+
+# Create the GUI
+def create_window():
+    window = tk.Tk()
+    window.title("System Checks")
+    screen_width = window.winfo_screenwidth()
+    screen_height = window.winfo_screenheight()
+    window.geometry(f"{screen_width}x{screen_height}")
+    background_label = tk.Label(window, text="WINDOW COMPLIANCE TOOL ", font=("Arial", 50), bg="lightgray")
+    background_label.place(relx=0.5, rely=0.7, anchor=tk.CENTER)
+
+    def run_firewall_check():
+        firewall_status = is_firewall_enabled()
+        if firewall_status:
+            messagebox.showinfo("Firewall Status", "Windows Firewall is enabled.")
+        else:
+            messagebox.showinfo("Firewall Status", "Windows Firewall is not enabled.")
+
+    def run_remote_protocols_check():
+        telnet_status = check_telnet_status()
+        tftp_status = check_tftp_status()
+        rdp_status = check_rdp_status()
+        messagebox.showinfo("Remote Protocols Status", f"{telnet_status}\n{tftp_status}\n{rdp_status}")
+
+    def run_antivirus_check():
+        status = get_defender_status()
+        messagebox.showinfo("Antivirus Status", status)
+
+    def run_auto_login_check():
+        if check_admin_autologon():
+            messagebox.showinfo("Auto-Login Status", "Admin autologon is enabled.")
+        else:
+            messagebox.showinfo("Auto-Login Status", "Admin autologon is already disabled.")
+
+    def run_uac_check():
+        if is_uac_enabled():
+            messagebox.showinfo("UAC Status", "User Account Control (UAC) is already enabled.")
+        else:
+            choice = messagebox.askquestion("UAC Status", "User Account Control (UAC) is currently disabled. Do you want to enable it?")
+            if choice == "yes":
+                enable_uac()
+                messagebox.showinfo("UAC Status", "User Account Control (UAC) has been enabled successfully.")
+            else:
+                messagebox.showinfo("UAC Status", "User chose not to enable User Account Control (UAC).")
+
+    def run_exe_programs_check():
+        startup_programs = get_startup_programs()
+        startup_programs_info = "\n".join([f"{name}: {value}" for name, value in startup_programs])
+        messagebox.showinfo("Startup Programs", f"List of programs that automatically enable on startup:\n{startup_programs_info}")
+
+    def run_remote_registry_check():
+        if check_remote_registry_status():
+            messagebox.showinfo("Remote Registry Status", "Remote Registry service is currently enabled.")
+        else:
+            choice = messagebox.askquestion("Remote Registry Status", "Remote Registry service is currently disabled. Do you want to enable it?")
+            if choice == "yes":
+                disable_remote_registry()
+                messagebox.showinfo("Remote Registry Status", "Remote Registry service has been disabled successfully.")
+            else:
+                messagebox.showinfo("Remote Registry Status", "User chose not to enable Remote Registry service.")
+
+    # Buttons from Code 1
+    btn_firewall = tk.Button(window, text="Firewall Check", command=run_firewall_check, bg="black", fg="white", width=15, height=5)
+    btn_firewall.place(x=50, y=50)
+
+    btn_remote_protocols = tk.Button(window, text="Remote Protocols Check", command=run_remote_protocols_check, bg="black", fg="white", width=18, height=5)
+    btn_remote_protocols.place(x=250, y=50)
+
+    btn_antivirus = tk.Button(window, text="Antivirus Check", command=run_antivirus_check, bg="black", fg="white", width=15, height=5)
+    btn_antivirus.place(x=450, y=50)
+
+    btn_auto_login = tk.Button(window, text="Auto-Login Check", command=run_auto_login_check, bg="black", fg="white", width=15, height=5)
+    btn_auto_login.place(x=50, y=200)
+
+    btn_uac = tk.Button(window, text="UAC Check", command=run_uac_check, bg="black", fg="white", width=18, height=5)
+    btn_uac.place(x=250, y=200)
+
+    btn_exe_programs = tk.Button(window, text="Exe. Programs Check", command=run_exe_programs_check, bg="black", fg="white", width=15, height=5)
+    btn_exe_programs.place(x=450, y=200)
+
+    btn_remote_registry = tk.Button(window, text="Remote Registry Check", command=run_remote_registry_check, bg="black", fg="white", width=18, height=5)
+    btn_remote_registry.place(x=50, y=350)
+
+    # Buttons from Code 2
+    btn_disable_ipv6 = tk.Button(window, text="Disable IPv6", command=run_ipv6_disable, bg="black", fg="white", width=18, height=5)
+    btn_disable_ipv6.place(x=250, y=350)
+
+    # Buttons from Code 3
+    btn_windows_version = tk.Button(window, text="Windows Version", command=run_windows_version, bg="black", fg="white", width=15, height=5)
+    btn_windows_version.place(x=450, y=350)
+
+    # Buttons from Code 4
+    btn_plain_text_password = tk.Button(window, text="Plain Text Password", command=run_plain_text_password_check, bg="black", fg="white", width=18, height=5)
+    btn_plain_text_password.place(x=650, y=350)
+
+    window.mainloop()
+
+if __name__ == "__main__":
+    create_window()
+
